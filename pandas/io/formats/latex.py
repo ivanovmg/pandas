@@ -31,6 +31,14 @@ class LatexFormatterAbstract(ABC):
     def _write_env_end(self, buf):
         pass
 
+    @abstractmethod
+    def _write_toprule(self, buf):
+        pass
+
+    @abstractmethod
+    def _write_midrule(self, buf):
+        pass
+
 
 class LatexFormatter(TableFormatter, LatexFormatterAbstract):
     """
@@ -75,12 +83,18 @@ class LatexFormatter(TableFormatter, LatexFormatterAbstract):
 
     def write_result(self, buf: IO[str]) -> None:
         self._write_env_begin(buf, self._get_column_format())
+        self._write_toprule(buf)
         self._write_env_body(buf, self._get_strcols())
         self._write_env_end(buf)
 
-    def _write_env_body(self, buf, strcols):
+    def _write_toprule(self, buf):
         buf.write("\\toprule\n")
 
+    def _write_header(self, buf, header):
+        if header:
+            buf.write(f"{header}\n")
+
+    def _write_env_body(self, buf, strcols):
         ilevels = self.frame.index.nlevels
         clevels = self.frame.columns.nlevels
         nlevels = clevels
@@ -91,36 +105,10 @@ class LatexFormatter(TableFormatter, LatexFormatterAbstract):
 
         for i, row in enumerate(strrows):
             if i == nlevels and self.fmt.header:
-                self._write_end_of_header(buf, row)
-            if self.escape:
-                # escape backslashes first
-                crow = [
-                    (
-                        x.replace("\\", "\\textbackslash ")
-                        .replace("_", "\\_")
-                        .replace("%", "\\%")
-                        .replace("$", "\\$")
-                        .replace("#", "\\#")
-                        .replace("{", "\\{")
-                        .replace("}", "\\}")
-                        .replace("~", "\\textasciitilde ")
-                        .replace("^", "\\textasciicircum ")
-                        .replace("&", "\\&")
-                        if (x and x != "{}")
-                        else "{}"
-                    )
-                    for x in row
-                ]
-            else:
-                crow = [x if x else "{}" for x in row]
-            if self.bold_rows and self.fmt.index:
-                # bold row labels
-                crow = [
-                    f"\\textbf{{{x}}}"
-                    if j < ilevels and x.strip() not in ["", "{}"]
-                    else x
-                    for j, x in enumerate(crow)
-                ]
+                self._write_midrule(buf, row)
+
+            crow = self._format_row(row, ilevels)
+
             if i < clevels and self.fmt.header and self.multicolumn:
                 # sum up columns to multicolumns
                 crow = self._format_multicolumn(crow, ilevels)
@@ -131,6 +119,36 @@ class LatexFormatter(TableFormatter, LatexFormatterAbstract):
             buf.write(" \\\\\n")
             if self.multirow and i < len(strrows) - 1:
                 self._print_cline(buf, i, len(strcols))
+
+    def _format_row(self, row, ilevels):
+        if self.escape:
+            # escape backslashes first
+            crow = [
+                (
+                    x.replace("\\", "\\textbackslash ")
+                    .replace("_", "\\_")
+                    .replace("%", "\\%")
+                    .replace("$", "\\$")
+                    .replace("#", "\\#")
+                    .replace("{", "\\{")
+                    .replace("}", "\\}")
+                    .replace("~", "\\textasciitilde ")
+                    .replace("^", "\\textasciicircum ")
+                    .replace("&", "\\&")
+                    if (x and x != "{}")
+                    else "{}"
+                )
+                for x in row
+            ]
+        else:
+            crow = [x if x else "{}" for x in row]
+        if self.bold_rows and self.fmt.index:
+            # bold row labels
+            crow = [
+                f"\\textbf{{{x}}}" if j < ilevels and x.strip() not in ["", "{}"] else x
+                for j, x in enumerate(crow)
+            ]
+        return crow
 
     def _get_strcols(self):
         # string representation of the columns
@@ -356,7 +374,7 @@ class LatexTableFormatter(LatexFormatter, RegularCaptionMixin):
         buf.write("\\end{tabular}\n")
         buf.write("\\end{table}\n")
 
-    def _write_end_of_header(self, buf, row):
+    def _write_midrule(self, buf, row):
         buf.write("\\midrule\n")
 
 
@@ -392,7 +410,7 @@ class LatexTabularFormatter(LatexFormatter, RegularCaptionMixin):
         buf.write("\\bottomrule\n")
         buf.write("\\end{tabular}\n")
 
-    def _write_end_of_header(self, buf, row):
+    def _write_midrule(self, buf, row):
         buf.write("\\midrule\n")
 
 
@@ -436,7 +454,7 @@ class LatexLongTableFormatter(LatexFormatter, LongTableCaptionMixin):
         """
         buf.write("\\end{longtable}\n")
 
-    def _write_end_of_header(self, buf, row):
+    def _write_midrule(self, buf, row):
         buf.write("\\midrule\n")
         buf.write("\\endhead\n")
         buf.write("\\midrule\n")
