@@ -20,15 +20,15 @@ class LatexFormatterAbstract(ABC):
         """
 
     @abstractmethod
-    def _write_table_begin(self, buf, column_format):
+    def _write_env_begin(self, buf, column_format):
         pass
 
     @abstractmethod
-    def _write_table_body(self, buf, strcols):
+    def _write_env_body(self, buf, strcols):
         pass
 
     @abstractmethod
-    def _write_table_end(self, buf):
+    def _write_env_end(self, buf):
         pass
 
 
@@ -72,14 +72,13 @@ class LatexFormatter(TableFormatter, LatexFormatterAbstract):
         self.label = label
         self.escape = self.fmt.escape
         self.position = position
-        self._table_float = any(p is not None for p in (caption, label, position))
 
     def write_result(self, buf: IO[str]) -> None:
-        self._write_table_begin(buf, self._get_column_format())
-        self._write_table_body(buf, self._get_strcols())
-        self._write_table_end(buf)
+        self._write_env_begin(buf, self._get_column_format())
+        self._write_env_body(buf, self._get_strcols())
+        self._write_env_end(buf)
 
-    def _write_table_body(self, buf, strcols):
+    def _write_env_body(self, buf, strcols):
         buf.write("\\toprule\n")
 
         ilevels = self.frame.index.nlevels
@@ -290,11 +289,35 @@ class LatexFormatter(TableFormatter, LatexFormatterAbstract):
             return f"\\label{{{self.label}}}"
 
 
-class LatexTabularFormatter(LatexFormatter):
-    def _write_table_begin(self, buf, column_format: str):
+class RegularCaptionMixin:
+    def _compose_caption_and_label_macro(self):
+        parts = [
+            self._compose_caption_macro(),
+            self._compose_label_macro(),
+        ]
+        return "\n".join([x for x in parts if x])
+
+
+class LongTableCaptionMixin:
+    def _compose_caption_and_label_macro(self):
+        parts = [
+            self._compose_caption_macro(),
+            self._compose_label_macro(),
+        ]
+        caption_and_label = "".join([x for x in parts if x])
+        if caption_and_label:
+            # a double-backslash is required at the end of the line
+            # as discussed here:
+            # https://tex.stackexchange.com/questions/219138
+            double_backslash = "\\\\"
+            return "".join([caption_and_label, double_backslash])
+
+
+class LatexTableFormatter(LatexFormatter, RegularCaptionMixin):
+    def _write_env_begin(self, buf, column_format: str):
         """
-        Write the beginning of a tabular environment or
-        nested table/tabular environments including caption and label.
+        Write the beginning of a table environment and
+        nested tabular environments including caption and label.
 
         Parameters
         ----------
@@ -306,18 +329,55 @@ class LatexTabularFormatter(LatexFormatter):
             <https://en.wikibooks.org/wiki/LaTeX/Tables>`__ e.g 'rcl'
             for 3 columns
         """
-        if self._table_float:
-            # then write output in a nested table/tabular environment
-            if self.position is None:
-                position_ = ""
-            else:
-                position_ = f"[{self.position}]"
-            buf.write(f"\\begin{{table}}{position_}\n\\centering\n")
-        if self.caption or self.label:
-            buf.write(f"{self._compose_caption_and_label_macro()}\n")
+        if self.position is None:
+            position_ = ""
+        else:
+            position_ = f"[{self.position}]"
+        buf.write(f"\\begin{{table}}{position_}\n\\centering\n")
+
+        caption_and_label = self._compose_caption_and_label_macro()
+        if caption_and_label:
+            buf.write(f"{caption_and_label}\n")
+
         buf.write(f"\\begin{{tabular}}{{{column_format}}}\n")
 
-    def _write_table_end(self, buf):
+    def _write_env_end(self, buf):
+        """
+        Write the end of a table environment.
+
+        Parameters
+        ----------
+        buf : string or file handle
+            File path or object. If not specified, the result is returned as
+            a string.
+
+        """
+        buf.write("\\bottomrule\n")
+        buf.write("\\end{tabular}\n")
+        buf.write("\\end{table}\n")
+
+    def _write_end_of_header(self, buf, row):
+        buf.write("\\midrule\n")
+
+
+class LatexTabularFormatter(LatexFormatter, RegularCaptionMixin):
+    def _write_env_begin(self, buf, column_format: str):
+        """
+        Write the beginning of a tabular environment.
+
+        Parameters
+        ----------
+        buf : string or file handle
+            File path or object. If not specified, the result is returned as
+            a string.
+        column_format : str
+            The columns format as specified in `LaTeX table format
+            <https://en.wikibooks.org/wiki/LaTeX/Tables>`__ e.g 'rcl'
+            for 3 columns
+        """
+        buf.write(f"\\begin{{tabular}}{{{column_format}}}\n")
+
+    def _write_env_end(self, buf):
         """
         Write the end of a tabular environment or nested table/tabular
         environment.
@@ -331,22 +391,13 @@ class LatexTabularFormatter(LatexFormatter):
         """
         buf.write("\\bottomrule\n")
         buf.write("\\end{tabular}\n")
-        if self._table_float:
-            buf.write("\\end{table}\n")
 
     def _write_end_of_header(self, buf, row):
         buf.write("\\midrule\n")
 
-    def _compose_caption_and_label_macro(self):
-        parts = [
-            self._compose_caption_macro(),
-            self._compose_label_macro(),
-        ]
-        return "\n".join([x for x in parts if x])
 
-
-class LatexLongTableFormatter(LatexFormatter):
-    def _write_table_begin(self, buf, column_format: str):
+class LatexLongTableFormatter(LatexFormatter, LongTableCaptionMixin):
+    def _write_env_begin(self, buf, column_format: str):
         """
         Write the beginning of a longtable environment including caption and
         label if provided by user.
@@ -367,10 +418,12 @@ class LatexLongTableFormatter(LatexFormatter):
             position_ = f"[{self.position}]"
 
         buf.write(f"\\begin{{longtable}}{position_}{{{column_format}}}\n")
-        if self.caption or self.label:
-            buf.write(f"{self._compose_caption_and_label_macro()}\n")
 
-    def _write_table_end(self, buf):
+        caption_and_label = self._compose_caption_and_label_macro()
+        if caption_and_label:
+            buf.write(f"{caption_and_label}\n")
+
+    def _write_env_end(self, buf):
         """
         Write the end of a longtable environment.
 
@@ -394,15 +447,3 @@ class LatexLongTableFormatter(LatexFormatter):
         buf.write("\\endfoot\n\n")
         buf.write("\\bottomrule\n")
         buf.write("\\endlastfoot\n")
-
-    def _compose_caption_and_label_macro(self):
-        # a double-backslash is required at the end of the line
-        # as discussed here:
-        # https://tex.stackexchange.com/questions/219138
-        double_backslash = "\\\\"
-        parts = [
-            self._compose_caption_macro(),
-            self._compose_label_macro(),
-            double_backslash,
-        ]
-        return "".join([x for x in parts if x])
