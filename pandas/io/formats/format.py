@@ -937,12 +937,9 @@ class DataFrameFormatter(TableFormatter):
         """
         Render a DataFrame to a LaTeX tabular/longtable environment output.
         """
-        from pandas.io.formats.latex import LatexFormatter
-
-        return LatexFormatter(
-            self,
+        latex_formatter = self._create_latex_formatter(
+            longtable,
             column_format=column_format,
-            longtable=longtable,
             multicolumn=multicolumn,
             multicolumn_format=multicolumn_format,
             multirow=multirow,
@@ -950,7 +947,19 @@ class DataFrameFormatter(TableFormatter):
             short_caption=short_caption,
             label=label,
             position=position,
-        ).get_result(buf=buf, encoding=encoding)
+        )
+        return latex_formatter.get_result(buf=buf, encoding=encoding)
+
+    def _create_latex_formatter(self, longtable: bool, **kwargs):
+        """Create concrete instance of LatexFormatter."""
+        from pandas.io.formats.latex import (
+            LatexLongTableFormatter,
+            LatexTabularFormatter,
+        )
+
+        if longtable:
+            return LatexLongTableFormatter(self, **kwargs)
+        return LatexTabularFormatter(self, **kwargs)
 
     def _format_col(self, i: int) -> List[str]:
         frame = self.tr_frame

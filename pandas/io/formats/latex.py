@@ -1,6 +1,7 @@
 """
 Module for formatting output data in Latex.
 """
+from abc import ABC, abstractmethod
 from typing import IO, List, Optional, Tuple
 
 import numpy as np
@@ -10,7 +11,28 @@ from pandas.core.dtypes.generic import ABCMultiIndex
 from pandas.io.formats.format import DataFrameFormatter, TableFormatter
 
 
-class LatexFormatter(TableFormatter):
+class LatexFormatterAbstract(ABC):
+    @abstractmethod
+    def write_result(self, buf: IO[str]) -> None:
+        """
+        Render a DataFrame to a LaTeX tabular, longtable, or table/tabular
+        environment output.
+        """
+
+    @abstractmethod
+    def _write_table_begin(self, buf, column_format):
+        pass
+
+    @abstractmethod
+    def _write_table_body(self, buf, strcols):
+        pass
+
+    @abstractmethod
+    def _write_table_end(self, buf):
+        pass
+
+
+class LatexFormatter(TableFormatter, LatexFormatterAbstract):
     """
     Used to render a DataFrame to a LaTeX tabular/longtable environment output.
 
@@ -20,8 +42,6 @@ class LatexFormatter(TableFormatter):
     column_format : str, default None
         The columns format as specified in `LaTeX table format
         <https://en.wikibooks.org/wiki/LaTeX/Tables>`__ e.g 'rcl' for 3 columns
-    longtable : boolean, default False
-        Use a longtable environment instead of tabular.
 
     See Also
     --------
@@ -32,7 +52,6 @@ class LatexFormatter(TableFormatter):
         self,
         formatter: DataFrameFormatter,
         column_format: Optional[str] = None,
-        longtable: bool = False,
         multicolumn: bool = False,
         multicolumn_format: Optional[str] = None,
         multirow: bool = False,
@@ -45,7 +64,6 @@ class LatexFormatter(TableFormatter):
         self.frame = self.fmt.frame
         self.bold_rows = self.fmt.bold_rows
         self.column_format = column_format
-        self.longtable = longtable
         self.multicolumn = multicolumn
         self.multicolumn_format = multicolumn_format
         self.multirow = multirow
@@ -57,77 +75,11 @@ class LatexFormatter(TableFormatter):
         self._table_float = any(p is not None for p in (caption, label, position))
 
     def write_result(self, buf: IO[str]) -> None:
-        """
-        Render a DataFrame to a LaTeX tabular, longtable, or table/tabular
-        environment output.
-        """
-        # string representation of the columns
-        if len(self.frame.columns) == 0 or len(self.frame.index) == 0:
-            info_line = (
-                f"Empty {type(self.frame).__name__}\n"
-                f"Columns: {self.frame.columns}\n"
-                f"Index: {self.frame.index}"
-            )
-            strcols = [[info_line]]
-        else:
-            strcols = self.fmt._to_str_columns()
+        self._write_table_begin(buf, self._get_column_format())
+        self._write_table_body(buf, self._get_strcols())
+        self._write_table_end(buf)
 
-        def get_col_type(dtype):
-            if issubclass(dtype.type, np.number):
-                return "r"
-            else:
-                return "l"
-
-        # reestablish the MultiIndex that has been joined by _to_str_column
-        if self.fmt.index and isinstance(self.frame.index, ABCMultiIndex):
-            out = self.frame.index.format(
-                adjoin=False,
-                sparsify=self.fmt.sparsify,
-                names=self.fmt.has_index_names,
-                na_rep=self.fmt.na_rep,
-            )
-
-            # index.format will sparsify repeated entries with empty strings
-            # so pad these with some empty space
-            def pad_empties(x):
-                for pad in reversed(x):
-                    if pad:
-                        break
-                return [x[0]] + [i if i else " " * len(pad) for i in x[1:]]
-
-            out = (pad_empties(i) for i in out)
-
-            # Add empty spaces for each column level
-            clevels = self.frame.columns.nlevels
-            out = [[" " * len(i[-1])] * clevels + i for i in out]
-
-            # Add the column names to the last index column
-            cnames = self.frame.columns.names
-            if any(cnames):
-                new_names = [i if i else "{}" for i in cnames]
-                out[self.frame.index.nlevels - 1][:clevels] = new_names
-
-            # Get rid of old multiindex column and add new ones
-            strcols = out + strcols[1:]
-
-        if self.column_format is None:
-            dtypes = self.frame.dtypes._values
-            column_format = "".join(map(get_col_type, dtypes))
-            if self.fmt.index:
-                index_format = "l" * self.frame.index.nlevels
-                column_format = index_format + column_format
-        elif not isinstance(self.column_format, str):  # pragma: no cover
-            raise AssertionError(
-                f"column_format must be str or unicode, not {type(column_format)}"
-            )
-        else:
-            column_format = self.column_format
-
-        if self.longtable:
-            self._write_longtable_begin(buf, column_format)
-        else:
-            self._write_tabular_begin(buf, column_format)
-
+    def _write_table_body(self, buf, strcols):
         buf.write("\\toprule\n")
 
         ilevels = self.frame.index.nlevels
@@ -140,18 +92,7 @@ class LatexFormatter(TableFormatter):
 
         for i, row in enumerate(strrows):
             if i == nlevels and self.fmt.header:
-                buf.write("\\midrule\n")  # End of header
-                if self.longtable:
-                    buf.write("\\endhead\n")
-                    buf.write("\\midrule\n")
-                    buf.write(
-                        f"\\multicolumn{{{len(row)}}}{{r}}"
-                        "{{Continued on next page}} \\\\\n"
-                    )
-                    buf.write("\\midrule\n")
-                    buf.write("\\endfoot\n\n")
-                    buf.write("\\bottomrule\n")
-                    buf.write("\\endlastfoot\n")
+                self._write_end_of_header(buf, row)
             if self.escape:
                 # escape backslashes first
                 crow = [
@@ -192,10 +133,71 @@ class LatexFormatter(TableFormatter):
             if self.multirow and i < len(strrows) - 1:
                 self._print_cline(buf, i, len(strcols))
 
-        if self.longtable:
-            self._write_longtable_end(buf)
+    def _get_strcols(self):
+        # string representation of the columns
+        if len(self.frame.columns) == 0 or len(self.frame.index) == 0:
+            info_line = (
+                f"Empty {type(self.frame).__name__}\n"
+                f"Columns: {self.frame.columns}\n"
+                f"Index: {self.frame.index}"
+            )
+            strcols = [[info_line]]
         else:
-            self._write_tabular_end(buf)
+            strcols = self.fmt._to_str_columns()
+
+        # reestablish the MultiIndex that has been joined by _to_str_column
+        if self.fmt.index and isinstance(self.frame.index, ABCMultiIndex):
+            out = self.frame.index.format(
+                adjoin=False,
+                sparsify=self.fmt.sparsify,
+                names=self.fmt.has_index_names,
+                na_rep=self.fmt.na_rep,
+            )
+
+            # index.format will sparsify repeated entries with empty strings
+            # so pad these with some empty space
+            def pad_empties(x):
+                for pad in reversed(x):
+                    if pad:
+                        break
+                return [x[0]] + [i if i else " " * len(pad) for i in x[1:]]
+
+            out = (pad_empties(i) for i in out)
+
+            # Add empty spaces for each column level
+            clevels = self.frame.columns.nlevels
+            out = [[" " * len(i[-1])] * clevels + i for i in out]
+
+            # Add the column names to the last index column
+            cnames = self.frame.columns.names
+            if any(cnames):
+                new_names = [i if i else "{}" for i in cnames]
+                out[self.frame.index.nlevels - 1][:clevels] = new_names
+
+            # Get rid of old multiindex column and add new ones
+            strcols = out + strcols[1:]
+        return strcols
+
+    def _get_column_format(self):
+        def get_col_type(dtype):
+            if issubclass(dtype.type, np.number):
+                return "r"
+            else:
+                return "l"
+
+        if self.column_format is None:
+            dtypes = self.frame.dtypes._values
+            column_format = "".join(map(get_col_type, dtypes))
+            if self.fmt.index:
+                index_format = "l" * self.frame.index.nlevels
+                column_format = index_format + column_format
+        elif not isinstance(self.column_format, str):  # pragma: no cover
+            raise AssertionError(
+                f"column_format must be str or unicode, not {type(column_format)}"
+            )
+        else:
+            column_format = self.column_format
+        return column_format
 
     def _format_multicolumn(self, row: List[str], ilevels: int) -> List[str]:
         r"""
@@ -274,7 +276,22 @@ class LatexFormatter(TableFormatter):
         # remove entries that have been written to buffer
         self.clinebuf = [x for x in self.clinebuf if x[0] != i]
 
-    def _write_tabular_begin(self, buf, column_format: str):
+    def _compose_caption_macro(self):
+        if self.caption is None:
+            return ""
+        if self.short_caption:
+            return f"\\caption[{self.short_caption}]{{{self.caption}}}"
+        return f"\\caption{{{self.caption}}}"
+
+    def _compose_label_macro(self):
+        if self.label is None:
+            return ""
+        else:
+            return f"\\label{{{self.label}}}"
+
+
+class LatexTabularFormatter(LatexFormatter):
+    def _write_table_begin(self, buf, column_format: str):
         """
         Write the beginning of a tabular environment or
         nested table/tabular environments including caption and label.
@@ -300,7 +317,7 @@ class LatexFormatter(TableFormatter):
             buf.write(f"{self._compose_caption_and_label_macro()}\n")
         buf.write(f"\\begin{{tabular}}{{{column_format}}}\n")
 
-    def _write_tabular_end(self, buf):
+    def _write_table_end(self, buf):
         """
         Write the end of a tabular environment or nested table/tabular
         environment.
@@ -316,10 +333,20 @@ class LatexFormatter(TableFormatter):
         buf.write("\\end{tabular}\n")
         if self._table_float:
             buf.write("\\end{table}\n")
-        else:
-            pass
 
-    def _write_longtable_begin(self, buf, column_format: str):
+    def _write_end_of_header(self, buf, row):
+        buf.write("\\midrule\n")
+
+    def _compose_caption_and_label_macro(self):
+        parts = [
+            self._compose_caption_macro(),
+            self._compose_label_macro(),
+        ]
+        return "\n".join([x for x in parts if x])
+
+
+class LatexLongTableFormatter(LatexFormatter):
+    def _write_table_begin(self, buf, column_format: str):
         """
         Write the beginning of a longtable environment including caption and
         label if provided by user.
@@ -343,8 +370,7 @@ class LatexFormatter(TableFormatter):
         if self.caption or self.label:
             buf.write(f"{self._compose_caption_and_label_macro()}\n")
 
-    @staticmethod
-    def _write_longtable_end(buf):
+    def _write_table_end(self, buf):
         """
         Write the end of a longtable environment.
 
@@ -357,29 +383,26 @@ class LatexFormatter(TableFormatter):
         """
         buf.write("\\end{longtable}\n")
 
+    def _write_end_of_header(self, buf, row):
+        buf.write("\\midrule\n")
+        buf.write("\\endhead\n")
+        buf.write("\\midrule\n")
+        buf.write(
+            f"\\multicolumn{{{len(row)}}}{{r}}" "{{Continued on next page}} \\\\\n"
+        )
+        buf.write("\\midrule\n")
+        buf.write("\\endfoot\n\n")
+        buf.write("\\bottomrule\n")
+        buf.write("\\endlastfoot\n")
+
     def _compose_caption_and_label_macro(self):
-        caption_ = self._compose_caption_macro()
-        label_ = self._compose_label_macro()
-        if self.longtable:
-            # a double-backslash is required at the end of the line
-            # as discussed here:
-            # https://tex.stackexchange.com/questions/219138
-            double_backslash = "\\\\"
-            parts = [caption_, label_, double_backslash]
-            return "".join([x for x in parts if x])
-        else:
-            parts = [caption_, label_]
-            return "\n".join([x for x in parts if x])
-
-    def _compose_caption_macro(self):
-        if self.caption is None:
-            return ""
-        if self.short_caption:
-            return f"\\caption[{self.short_caption}]{{{self.caption}}}"
-        return f"\\caption{{{self.caption}}}"
-
-    def _compose_label_macro(self):
-        if self.label is None:
-            return ""
-        else:
-            return f"\\label{{{self.label}}}"
+        # a double-backslash is required at the end of the line
+        # as discussed here:
+        # https://tex.stackexchange.com/questions/219138
+        double_backslash = "\\\\"
+        parts = [
+            self._compose_caption_macro(),
+            self._compose_label_macro(),
+            double_backslash,
+        ]
+        return "".join([x for x in parts if x])
