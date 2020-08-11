@@ -306,6 +306,12 @@ class LatexFormatter(TableFormatter, LatexFormatterAbstract):
         else:
             return f"\\label{{{self.label}}}"
 
+    def _get_position_option_string(self):
+        if self.position is None:
+            return ""
+        else:
+            return f"[{self.position}]"
+
 
 class RegularCaptionMixin:
     def _compose_caption_and_label_macro(self):
@@ -347,10 +353,7 @@ class LatexTableFormatter(LatexFormatter, RegularCaptionMixin):
             <https://en.wikibooks.org/wiki/LaTeX/Tables>`__ e.g 'rcl'
             for 3 columns
         """
-        if self.position is None:
-            position_ = ""
-        else:
-            position_ = f"[{self.position}]"
+        position_ = self._get_position_option_string()
         buf.write(f"\\begin{{table}}{position_}\n\\centering\n")
 
         caption_and_label = self._compose_caption_and_label_macro()
@@ -430,11 +433,7 @@ class LatexLongTableFormatter(LatexFormatter, LongTableCaptionMixin):
             <https://en.wikibooks.org/wiki/LaTeX/Tables>`__ e.g 'rcl'
             for 3 columns
         """
-        if self.position is None:
-            position_ = ""
-        else:
-            position_ = f"[{self.position}]"
-
+        position_ = self._get_position_option_string()
         buf.write(f"\\begin{{longtable}}{position_}{{{column_format}}}\n")
 
         caption_and_label = self._compose_caption_and_label_macro()
