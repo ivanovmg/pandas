@@ -32,11 +32,7 @@ class LatexFormatterAbstract(ABC):
         pass
 
     @abstractmethod
-    def _write_toprule(self, buf):
-        pass
-
-    @abstractmethod
-    def _write_midrule(self, buf):
+    def _write_header_separator(self, buf):
         pass
 
 
@@ -83,12 +79,8 @@ class LatexFormatter(TableFormatter, LatexFormatterAbstract):
 
     def write_result(self, buf: IO[str]) -> None:
         self._write_env_begin(buf, self._get_column_format())
-        self._write_toprule(buf)
         self._write_env_body(buf, self._get_strcols())
         self._write_env_end(buf)
-
-    def _write_toprule(self, buf):
-        buf.write("\\toprule\n")
 
     def _write_header(self, buf, header):
         if header:
@@ -103,9 +95,10 @@ class LatexFormatter(TableFormatter, LatexFormatterAbstract):
         strrows = list(zip(*strcols))
         self.clinebuf: List[List[int]] = []
 
+        buf.write("\\toprule\n")
         for i, row in enumerate(strrows):
             if i == nlevels and self.fmt.header:
-                self._write_midrule(buf, row)
+                self._write_header_separator(buf, row)
 
             crow = self._format_row(row, ilevels)
 
@@ -377,7 +370,7 @@ class LatexTableFormatter(LatexFormatter, RegularCaptionMixin):
         buf.write("\\end{tabular}\n")
         buf.write("\\end{table}\n")
 
-    def _write_midrule(self, buf, row):
+    def _write_header_separator(self, buf, row):
         buf.write("\\midrule\n")
 
 
@@ -413,7 +406,7 @@ class LatexTabularFormatter(LatexFormatter, RegularCaptionMixin):
         buf.write("\\bottomrule\n")
         buf.write("\\end{tabular}\n")
 
-    def _write_midrule(self, buf, row):
+    def _write_header_separator(self, buf, row):
         buf.write("\\midrule\n")
 
 
@@ -453,7 +446,7 @@ class LatexLongTableFormatter(LatexFormatter, LongTableCaptionMixin):
         """
         buf.write("\\end{longtable}\n")
 
-    def _write_midrule(self, buf, row):
+    def _write_header_separator(self, buf, row):
         buf.write("\\midrule\n")
         buf.write("\\endhead\n")
         buf.write("\\midrule\n")
