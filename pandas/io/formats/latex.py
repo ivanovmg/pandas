@@ -82,10 +82,6 @@ class LatexFormatter(TableFormatter, LatexFormatterAbstract):
         self._write_env_body(buf, self._get_strcols())
         self._write_env_end(buf)
 
-    def _write_header(self, buf, header):
-        if header:
-            buf.write(f"{header}\n")
-
     def _write_env_body(self, buf, strcols):
         ilevels = self.frame.index.nlevels
         clevels = self.frame.columns.nlevels
